@@ -215,6 +215,9 @@ type
   // if New line is read via pipe
   TNewCharEvent = procedure(ASender: TObject; ANewChar: Char) of object;
   // every New char from pipe
+  // modified begin
+  TNewTextEvent = procedure(ASender: TObject; const ANewText, ANewStr: string) of object;
+  // modified end
   TErrorEvent = procedure(ASender: TObject; AE: Exception; var AHandled: Boolean) of object;
   // if Exception occurs in TDosThread -> if not handled, Messagebox will be shown
   TTerminateProcessEvent = procedure(ASender: TObject; var ACanTerminate: Boolean) of object;
@@ -293,6 +296,9 @@ type
     FCommandLine: string;
     FCurrentDir: string;
     FEnvironment: TStringList;
+    // modified begin
+    FEof: Boolean;
+    // modified end
     FInputLines: TInputLines;
     FInputToOutput: Boolean;
     FLines: TStringList;
@@ -302,6 +308,9 @@ type
     FOnCharEncoding: TCharEncoding;
     FOnNewChar: TNewCharEvent;
     FOnNewLine: TNewLineEvent;
+    // modified begin
+    FOnNewText: TNewTextEvent;
+    // modified end
     FOnTerminateProcess: TTerminateProcessEvent;
     FOutputLines: TStrings;
     FOwner: TDosCommand;
@@ -316,19 +325,36 @@ type
     function DoCharDecoding(ASender: TObject; ABuf: RawByteString): string;
     // modified end
     procedure DoEndStatus(AValue: TEndStatus);
+    // modified begin
+    (*
     procedure DoLinesAdd(const AStr: string);
     procedure DoNewChar(AChar: Char);
     procedure DoNewLine(const AStr: string; AOutputType: TOutputType);
     procedure DoReadLine(AReadString: TSyncString; var AStr, ALast: string; var ALineBeginned: Boolean);
     procedure DoSendLine(AWritePipe: THandle; var ALast: string; var ALineBeginned: Boolean);
+    *)
+    procedure DoNewText(const AText, AStr: string);
+    procedure DoReadLine(AReadString: TSyncString; var AStr, ALast: RawByteString; var ALastCR, ALineBeginned: Boolean);
+    procedure DoSendLine(AWritePipe: THandle; var ALast: RawByteString; var ALineBeginned: Boolean);
+    procedure DoSyncNewText;
+    // modified end
     procedure DoTerminateProcess;
   private
     FExitCode: Cardinal;
   strict protected // DoSync-Methods are in Main-Thread-Context (called via Synchronize)
     FCanTerminate: Boolean;
+    // modified begin
+    FSyncStr: string;
+    FSyncText: string;
+    // modified end
     procedure Execute; override;
   public
+    // modified begin
+    (*
     constructor Create(AOwner: TDosCommand; ACl, ACurrDir: string; ALines: TStringList; AOl: TStrings; ATimer: TProcessTimer; AMtab, AMtalo: Integer; AOnl: TNewLineEvent; AOnc: TNewCharEvent; Ot: TNotifyEvent; AOtp: TTerminateProcessEvent; Ap: Integer; Aito: Boolean; AEnv: TStrings; AOnCharDecoding: TCharDecoding; AOnCharEncoding: TCharEncoding); reintroduce;
+    *)
+    constructor Create(AOwner: TDosCommand; ACl, ACurrDir: string; ALines: TStringList; AOl: TStrings; ATimer: TProcessTimer; AMtab, AMtalo: Integer; AOnl: TNewLineEvent; AOnc: TNewCharEvent; Ot: TNotifyEvent; AOtp: TTerminateProcessEvent; Ap: Integer; Aito: Boolean; AEnv: TStrings; AOnCharDecoding: TCharDecoding; AOnCharEncoding: TCharEncoding; AOnNewText: TNewTextEvent); reintroduce;
+    // modified end
     destructor Destroy; override;
     procedure Terminate; reintroduce;
     property InputLines: TInputLines read FInputLines;
@@ -349,6 +375,9 @@ type
     FonExecuteError: TErrorEvent;
     FOnNewChar: TNewCharEvent;
     FOnNewLine: TNewLineEvent;
+    // modified begin
+    FOnNewText: TNewTextEvent;
+    // modified end
     FOnTerminated: TNotifyEvent;
     FOnTerminateProcess: TTerminateProcessEvent;
     FOutputLines: TStrings;
@@ -401,6 +430,9 @@ type
     property OnExecuteError: TErrorEvent read FonExecuteError write FonExecuteError; // event if DosCommand.execute is aborted via Exception
     property OnNewChar: TNewCharEvent read FOnNewChar write FOnNewChar; // event for each New char that is received through the pipe
     property OnNewLine: TNewLineEvent read FOnNewLine write FOnNewLine; // event for each New line that is received through the pipe
+    // modified begin
+    property OnNewText: TNewTextEvent read FOnNewText write FOnNewText;
+    // modified end
     property OnTerminated: TNotifyEvent read FOnTerminated write FOnTerminated; // event for the end of the process (normally, time out or by user (DosCommand.Stop;))
     property OnTerminateProcess: TTerminateProcessEvent read FOnTerminateProcess write FOnTerminateProcess; // event to ask for processtermination
   end;
@@ -602,7 +634,12 @@ end;
 
 { TDosThread }
 
+// modified begin
+(*
 constructor TDosThread.Create(AOwner: TDosCommand; ACl, ACurrDir: string; ALines: TStringList; AOl: TStrings; ATimer: TProcessTimer; AMtab, AMtalo: Integer; AOnl: TNewLineEvent; AOnc: TNewCharEvent; Ot: TNotifyEvent; AOtp: TTerminateProcessEvent; Ap: Integer; Aito: Boolean; AEnv: TStrings; AOnCharDecoding: TCharDecoding; AOnCharEncoding: TCharEncoding);
+*)
+constructor TDosThread.Create(AOwner: TDosCommand; ACl, ACurrDir: string; ALines: TStringList; AOl: TStrings; ATimer: TProcessTimer; AMtab, AMtalo: Integer; AOnl: TNewLineEvent; AOnc: TNewCharEvent; Ot: TNotifyEvent; AOtp: TTerminateProcessEvent; Ap: Integer; Aito: Boolean; AEnv: TStrings; AOnCharDecoding: TCharDecoding; AOnCharEncoding: TCharEncoding; AOnNewText: TNewTextEvent);
+// modified end
 begin
   inherited Create(False);
   FOnCharEncoding := AOnCharEncoding;
@@ -627,6 +664,10 @@ begin
   FMaxTimeAfterLastOutput := AMtalo;
   FPriority := Ap;
   FTerminateEvent := TEvent.Create(nil, True, False, '');
+  // modified begin
+  FEof := False;
+  FOnNewText := AOnNewText;
+  // modified end
 end;
 
 destructor TDosThread.Destroy;
@@ -652,6 +693,8 @@ begin
   TInterlocked.Exchange(FOwner.FEndStatus, Ord(AValue));
 end;
 
+// modified begin
+(*
 procedure TDosThread.DoLinesAdd(const AStr: string);
 begin
   Queue(procedure
@@ -681,39 +724,70 @@ begin
     end);
   end;
 end;
+*)
+procedure TDosThread.DoNewText(const AText, AStr: string);
+begin
+  if Assigned(FOnNewText) then
+  begin
+    FSyncText := AText;
+    FSyncStr := AStr;
+    Synchronize(DoSyncNewText);
+  end;
+end;
+// modified end
 
+// modified begin
+(*
 procedure TDosThread.DoReadLine(AReadString: TSyncString; var AStr, ALast: string; var ALineBeginned: Boolean);
+*)
+procedure TDosThread.DoReadLine(AReadString: TSyncString; var AStr, ALast: RawByteString; var ALastCR, ALineBeginned: Boolean);
+// modified end
 var
+  // modified begin
+  (*
   sReads: string;
+  *)
+  sReads: RawByteString;
+  // modified end
   iCount, iLength: Integer;
+  // modified begin
+  (*
   sBuffer: string;
+  *)
+  S: string;
+  I: Integer;
+  // modified end
 begin
   // check to see if there is any data to read from stdout
-  // modified begin
-  (*
   sReads := AReadString.Value;
-  *)
-  sReads := DoCharDecoding(Self, AReadString.Value);
-  // modified end
   iLength := Length(sReads);
-  // modified begin
-  (*
   AReadString.Delete(1, iLength);
-  *)
-  AReadString.Delete(1, Length(AReadString.Value));
-  // modified end
 
   if iLength > 0 then
   begin
     AStr := ALast; // take the begin of the line (if exists)
+    // modified begin
+    (*
     for iCount := 1 to iLength do
+    *)
+    S := '';
+    I := 0;
+    iCount := 1;
+    while iCount <= iLength do
+    // modified end
     begin
       if Terminated then
         Exit;
 
+      // modified begin
+      (*
       DoNewChar(sReads[iCount]);
+      *)
+      // modified end
 
       case sReads[iCount] of
+        // modified begin
+        (*
         Char(0):
           begin // nothing
           end;
@@ -747,15 +821,49 @@ begin
             DoNewLine(AStr, otEntireLine);
             AStr := '';
           end;
+        *)
+        #0:
+          Inc(iCount);
+        #13:
+          begin
+            Inc(iCount);
+            ALastCR := iCount > iLength;
+            if (iCount <= iLength) and (sReads[iCount] = #10) then
+              Inc(iCount);
+            S := S + DoCharDecoding(Self, AStr) + #13#10;
+            AStr := '';
+          end;
+        #10:
+          begin
+            Inc(iCount);
+            if (iCount = 2) and ALastCR then
+              Continue;
+            S := S + DoCharDecoding(Self, AStr) + #13#10;
+            AStr := '';
+          end;
+        // modified end
       else
         begin
           AStr := AStr + sReads[iCount]; // add a character
+          // modified begin
+          Inc(iCount);
+          // modified end
         end;
       end;
+      // modified begin
+      Inc(I);
+      if I mod (1024 * 8) = 0 then
+      begin
+        DoNewText(S, '');
+        S := '';
+      end;
+      // modified end
     end;
     ALast := AStr; // no CRLF found in the rest, maybe in the next output
     if (ALast <> '') then
     begin
+      // modified begin
+      (*
       if Assigned(FOutputLines) then
       begin
         if ALineBeginned then
@@ -776,28 +884,38 @@ begin
         end;
       end;
       DoNewLine(AStr, otBeginningOfLine);
+      *)
+      // modified end
       ALineBeginned := True;
     end;
+    // modified begin
+    DoNewText(S, DoCharDecoding(Self, AStr));
+    // modified end
   end;
-  // modified begin
-  DoNewLine('', otNone);
-  // modified end
 end;
 
+// modified begin
+(*
 procedure TDosThread.DoSendLine(AWritePipe: THandle; var ALast: string; var ALineBeginned: Boolean);
+*)
+procedure TDosThread.DoSendLine(AWritePipe: THandle; var ALast: RawByteString; var ALineBeginned: Boolean);
+// modified end
 var
   sSends: string;
   bWrite: Cardinal;
   pBuf: TMemoryStream;
+  // modified begin
+  (*
   sBuffer: string;
+  *)
+  // modified end
 begin
   sSends := FInputLines[0];
   if (Copy(sSends, 1, 1) = '_') then
     sSends := sSends + Char(13) + Char(10);
   Delete(sSends, 1, 1);
   // modified begin
-  if (Copy(sSends, 1, 1) = '_') then
-    sSends := sSends + Char($1A);
+  FEof := Copy(sSends, 1, 1) = '_';
   Delete(sSends, 1, 1);
   // modified end
 
@@ -806,13 +924,20 @@ begin
     pBuf := TMemoryStream.Create;
     try
       FOnCharEncoding(Self, sSends, pBuf);
+      // modified begin
+      (*
       Assert(WriteFile(AWritePipe, pBuf.memory^, pBuf.Size, bWrite, nil));
+      *)
+      WriteFile(AWritePipe, pBuf.memory^, pBuf.Size, bWrite, nil);
+      // modified end
       // send it to stdin
     finally
       pBuf.Free;
     end;
     if FInputToOutput then // if we have to output the inputs
     begin
+      // modified begin
+      (*
       if Assigned(FOutputLines) then
       begin
         if ALineBeginned then
@@ -833,18 +958,30 @@ begin
           end);
         end;
       end;
-      // modified begin
-      (*
       DoNewLine(ALast, otEntireLine);
       *)
       // modified end
       ALast := '';
     end;
 
+    // modified begin
+    (*
     FInputLines.Delete(0); // delete the line that has been send
+    *)
+    // modified end
 
   end;
+  // modified begin
+  FInputLines.Delete(0);
+  // modified end
 end;
+
+// modified begin
+procedure TDosThread.DoSyncNewText;
+begin
+  FOnNewText(FOwner, FSyncText, FSyncStr);
+end;
+// modified end
 
 procedure TDosThread.DoTerminateProcess;
 begin
@@ -871,7 +1008,13 @@ var
   sd: PSECURITY_DESCRIPTOR;
   outputread, outputreadtmp, outputwrite, myoutputwrite, errorwrite, inputRead,
     inputWrite, inputWritetmp: THandle; // pipe handles
+  // modified begin
+  (*
   Str, last: string;
+  *)
+  Str, last: RawByteString;
+  LastCR: Boolean;
+  // modified end
   LineBeginned: Boolean;
   currDir: PChar;
   envText: string;
@@ -1023,6 +1166,9 @@ begin // Execute
         DoCharDecoding);
 
       last := ''; // Buffer to save last output without finished with CRLF
+      // modified begin
+      LastCR := False;
+      // modified end
       LineBeginned := False;
 
       GetExitCodeProcess(FProcessInformation.hProcess, FExitCode);
@@ -1054,22 +1200,37 @@ begin // Execute
               begin // InputEvent
                 if ((FInputLines.Count > 0) and not(Terminated)) then
                   DoSendLine(inputWrite, last, LineBeginned);
+                // modified begin
+                (*
                 if FInputLines.Count > 0 then
                   FInputLines.Event.SetEvent;
+                *)
+                if FInputLines.Count > 0 then
+                  FInputLines.Event.SetEvent
+                else if FEof and (inputWrite <> 0) and CloseHandle(inputWrite) then
+                  inputWrite := 0;
+                // modified end
               end;
 
             Wait_Object_0 + 0:
               begin // ReadEvent
+                // modified begin
+                (*
                 while ReadPipeThread.ReadString.Length > 0 do
                   DoReadLine(ReadPipeThread.ReadString, Str, last,
                     LineBeginned);
+                *)
+                while ReadPipeThread.ReadString.Length > 0 do
+                begin
+                  Sleep(1);
+                  DoReadLine(ReadPipeThread.ReadString, Str, last, LastCR,
+                    LineBeginned);
+                end;
+                // modified end
               end;
 
           end;
 
-          // modified begin
-          Sleep(50);
-          // modified end
         until Terminated or ((FExitCode <> STILL_ACTIVE)
           // process terminated (normally)
           or ((FMaxTimeAfterBeginning < FTimer.SinceBeginning) and
@@ -1092,6 +1253,8 @@ begin // Execute
           DoTerminateProcess; // stop Process
         end;
 
+        // modified begin
+        (*
         if (last <> '') then
         begin // If not empty flush last output
           DoLinesAdd(last);
@@ -1108,12 +1271,12 @@ begin // Execute
                 FOutputLines.Add(last);
               end);
           end;
-          // modified begin
-          (*
           DoNewLine(last, otEntireLine);
-          *)
-          // modified end
         end;
+        *)
+        if (last <> '') and (not Terminated) then
+          DoNewText(DoCharDecoding(Self, last), '');
+        // modified end
       finally
         ReadPipeThread.Terminate;
         ReadPipeThread.WaitFor;
@@ -1127,6 +1290,9 @@ begin // Execute
       FreeMem(sa);
 
       CloseHandle(outputread);
+      // modified begin
+      if inputWrite <> 0 then
+      // modified end
       CloseHandle(inputWrite);
       CloseHandle(myoutputwrite);
     end;
@@ -1231,10 +1397,18 @@ begin
     FTimer := TProcessTimer.Create;
   FLines.Clear; // clear old outputs
   FTimer.Beginning; // turn the timer on
+  // modified begin
+  (*
   FThread := TDosThread.Create(Self, FCommandLine, FCurrentDir, FLines,
     FOutputLines, FTimer, FMaxTimeAfterBeginning, FMaxTimeAfterLastOutput,
     FOnNewLine, FOnNewChar, ThreadTerminated, FOnTerminateProcess, FPriority,
     FInputToOutput, FEnvironment, DoCharDecoding, DoCharEncoding);
+  *)
+  FThread := TDosThread.Create(Self, FCommandLine, FCurrentDir, FLines,
+    FOutputLines, FTimer, FMaxTimeAfterBeginning, FMaxTimeAfterLastOutput,
+    FOnNewLine, FOnNewChar, ThreadTerminated, FOnTerminateProcess, FPriority,
+    FInputToOutput, FEnvironment, DoCharDecoding, DoCharEncoding, FOnNewText);
+  // modified end
 end;
 
 function TDosCommand.get_EndStatus: TEndStatus;
@@ -1514,16 +1688,11 @@ end;
 
 procedure TReadPipe.Execute;
 var
-  // modified begin
-  (*
   rBuf: array [0 .. 1023] of Byte;
-  *)
-  rBuf: array [0 .. 8191] of Byte;
-  // modified end
   Buf: TStream;
   bread: Cardinal;
   // modified begin
-  ABuf: RawByteString;
+  LBuf: RawByteString;
   // modified end
 begin
   repeat
@@ -1541,9 +1710,9 @@ begin
       (*
       FSyncString.Add(FOnCharDecoding(Self, Buf));
       *)
-      SetLength(ABuf, Buf.Size);
-      Buf.Read(ABuf[1], Buf.Size);
-      FSyncString.Add(ABuf);
+      SetLength(LBuf, Buf.Size);
+      Buf.Read(LBuf[1], Buf.Size);
+      FSyncString.Add(LBuf);
       // modified end
     finally
       Buf.Free;
